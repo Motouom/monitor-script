@@ -1,0 +1,14 @@
+# Reports
+monitor/reports/*.txt
+monitor/reports/*.html
+monitor/reports/*.gz
+
+# Temporary files
+*.tmp
+*.log
+/tmp/
+
+# System files
+.DS_Store
+*.swp
+*~
