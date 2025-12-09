@@ -31,6 +31,7 @@ REPORT_DIR="${SCRIPT_DIR}/reports"
 SCAN_DIRECTORIES=("/var/log" "/home" "/tmp")
 MAX_FILE_SIZE_MB=100
 BC_AVAILABLE=true
+ENABLE_ALERT_BELL=true  # Enable system bell for alerts
 
 # Report file will be set after config is loaded
 REPORT_FILE=""
@@ -78,6 +79,41 @@ print_header() {
     print_color "$CYAN" "$title"
     print_color "$CYAN" "=========================================="
     echo
+}
+
+# Function to send terminal alerts with color and optional bell
+send_alert() {
+    local alert_level="$1"  # CRITICAL, WARNING, or INFO
+    local message="$2"
+    local use_bell="${3:-true}"  # Optional: enable/disable bell
+    
+    case "$alert_level" in
+        "CRITICAL")
+            print_color "$RED" "🚨 CRITICAL ALERT: $message"
+            ;;
+        "WARNING")
+            print_color "$YELLOW" "⚠️  WARNING: $message"
+            ;;
+        "INFO")
+            print_color "$BLUE" "ℹ️  INFO: $message"
+            ;;
+        *)
+            print_color "$WHITE" "$message"
+            ;;
+    esac
+    
+    # Play system bell if enabled and alert level is CRITICAL or WARNING
+    if [[ "$use_bell" == "true" ]] && [[ "$ENABLE_ALERT_BELL" == "true" ]]; then
+        if [[ "$alert_level" == "CRITICAL" ]]; then
+            # Double bell for critical alerts
+            printf '\a\a'
+        elif [[ "$alert_level" == "WARNING" ]]; then
+            # Single bell for warnings
+            printf '\a'
+        fi
+    fi
+    
+    log_message "$alert_level" "$message"
 }
 
 # Function to load configuration
@@ -183,7 +219,7 @@ monitor_processes() {
         # Check for processes exceeding CPU threshold
         local high_cpu_processes=$(ps aux --sort=-%cpu | awk -v threshold="$CPU_THRESHOLD" 'NR>1 && $3>threshold {print $1, $3, $11}')
         if [[ -n "$high_cpu_processes" ]]; then
-            print_color "$RED" "ALERT: Processes using more than ${CPU_THRESHOLD}% CPU:"
+            send_alert "CRITICAL" "Processes using more than ${CPU_THRESHOLD}% CPU detected"
             echo "$high_cpu_processes" | while read user cpu cmd; do
                 print_color "$RED" "  User: $user, CPU: $cpu%, Command: $cmd"
             done
@@ -193,7 +229,7 @@ monitor_processes() {
         # Check for processes exceeding memory threshold
         local high_mem_processes=$(ps aux --sort=-%mem | awk -v threshold="$MEMORY_THRESHOLD" 'NR>1 && $4>threshold {print $1, $4, $11}')
         if [[ -n "$high_mem_processes" ]]; then
-            print_color "$YELLOW" "WARNING: Processes using more than ${MEMORY_THRESHOLD}% Memory:"
+            send_alert "WARNING" "Processes using more than ${MEMORY_THRESHOLD}% Memory detected"
             echo "$high_mem_processes" | while read user mem cmd; do
                 print_color "$YELLOW" "  User: $user, Memory: $mem%, Command: $cmd"
             done
@@ -212,9 +248,9 @@ monitor_disk_filesystem() {
         df -h | grep -E "^/dev/" | while read filesystem size used avail use_percent mount; do
             percent_num=$(echo "$use_percent" | sed 's/%//')
             if (( percent_num > DISK_THRESHOLD )); then
-                print_color "$RED" "CRITICAL: $filesystem ($mount) is ${use_percent} full!"
+                send_alert "CRITICAL" "$filesystem ($mount) is ${use_percent} full - exceeds threshold!"
             elif (( percent_num > 70 )); then
-                print_color "$YELLOW" "WARNING: $filesystem ($mount) is ${use_percent} full"
+                send_alert "WARNING" "$filesystem ($mount) is ${use_percent} full"
             else
                 echo "$filesystem ($mount) is ${use_percent} full"
             fi
@@ -340,7 +376,9 @@ analyze_logs() {
         echo
         
         if (( critical_count > 0 )); then
-            print_color "$RED" "ALERT: $critical_count critical errors found in the last 24 hours!"
+            send_alert "CRITICAL" "$critical_count critical errors found in the last 24 hours!"
+        elif (( error_count > 10 )); then
+            send_alert "WARNING" "$error_count errors found in the last 24 hours"
         fi
         
         print_color "$BLUE" "Top Error Types:"
@@ -424,12 +462,15 @@ generate_summary() {
         case $health_status in
             "GOOD")
                 print_color "$GREEN" "Overall System Health: GOOD"
+                send_alert "INFO" "System health is GOOD"
                 ;;
             "WARNING")
                 print_color "$YELLOW" "Overall System Health: WARNING"
+                send_alert "WARNING" "System health is WARNING - check resource usage"
                 ;;
             "CRITICAL")
                 print_color "$RED" "Overall System Health: CRITICAL"
+                send_alert "CRITICAL" "System health is CRITICAL - immediate attention required"
                 ;;
         esac
         
